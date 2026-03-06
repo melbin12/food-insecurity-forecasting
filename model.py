@@ -61,3 +61,95 @@ df_agg = df_clean.groupby(['country', 'date'], as_index=False)['ipc_p3plus'].sum
 
 # Display the first 10 rows
 df_agg.head(10)
+# Filter data for one country, e.g., Afghanistan
+country_name = 'Afghanistan'
+df_country = df_agg[df_agg['country'] == country_name]
+
+# Plot the time series
+plt.figure(figsize=(12, 6))
+plt.plot(df_country['date'], df_country['ipc_p3plus'], marker='o')
+plt.title(f"IPC Phase 3+ Population Over Time: {country_name}")
+plt.xlabel("Date")
+plt.ylabel("People in IPC Phase 3+")
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+# Check types and value examples
+print(df_agg.dtypes)
+
+# Check for any non-numeric examples
+non_numeric = df_agg[~df_agg['ipc_p3plus'].apply(lambda x: isinstance(x, (int, float)))]
+print("Non-numeric rows:", non_numeric.shape[0])
+print(non_numeric.head())
+# Count observations per country
+obs_counts = df_agg.groupby('country').size().sort_values()
+
+# Show countries with fewest data points
+print(obs_counts.head(20))
+# Count observations per country
+obs_counts = df_agg.groupby('country').size()
+
+# Keep only countries with at least 12 records
+eligible_countries = obs_counts[obs_counts >= 12].index.tolist()
+
+print(f"{len(eligible_countries)} countries have enough data.")
+print("Examples:", eligible_countries[:5])
+from statsmodels.tsa.arima.model import ARIMA
+
+all_forecasts = []
+
+for country in eligible_countries:
+    try:
+        # Filter country data
+        df_country = df_agg[df_agg['country'] == country].copy()
+
+        # Set date as index
+        df_country = df_country.set_index('date')
+
+        # IMPORTANT FIX: resample ONLY the numeric series
+        ts = df_country['ipc_p3plus']
+        ts = ts.resample('MS').mean()
+        ts = ts.ffill()
+
+        # Skip if still too short
+        if ts.count() < 12:
+            print(f"Skipping {country}: insufficient data after resampling")
+            continue
+
+        # Fit ARIMA
+        model = ARIMA(ts, order=(1, 1, 1))
+        model_fit = model.fit()
+
+        # Forecast next 24 months
+        forecast_steps = 24
+        forecast = model_fit.forecast(steps=forecast_steps)
+
+        # Create future dates
+        future_dates = pd.date_range(
+            start=ts.index[-1] + pd.DateOffset(months=1),
+            periods=forecast_steps,
+            freq='MS'
+        )
+
+        # Store forecast
+        df_forecast = pd.DataFrame({
+            'country': country,
+            'date': future_dates,
+            'forecast': forecast.values
+        })
+
+        all_forecasts.append(df_forecast)
+        print(f"✅ Success: {country}")
+
+    except Exception as e:
+        print(f"❌ Error for {country}: {e}")
+
+# Combine forecasts
+if all_forecasts:
+    df_all_forecasts = pd.concat(all_forecasts, ignore_index=True)
+    print("\nForecast sample:")
+    print(df_all_forecasts.head())
+else:
+    print("No successful forecasts.")
+
